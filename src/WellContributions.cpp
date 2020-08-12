@@ -29,7 +29,7 @@ int WellContributions::read_arr(char const *fname, T **pp){
 
     T *p;
     p = (T *)malloc(temp.size()*sizeof(T));
-    for(int i = 0; i < temp.size(); i++){
+    for(std::size_t i = 0; i < temp.size(); i++){
         p[i] = temp[i];
     }
     *pp = p;
@@ -154,7 +154,6 @@ void WellContributions::initialize(){
 
     cl::Program::Sources source(1, std::make_pair(kernel_s, strlen(kernel_s)));
     cl::Program program_ = cl::Program(*context, source);
-
     program_.build(devices);
 
     cl::Event event;
@@ -181,12 +180,14 @@ void WellContributions::initialize(){
 void WellContributions::apply_kernel(){
     const unsigned int work_group_size = 32;
     const unsigned int total_work_items = (len_val_pointers - 1)*work_group_size;
-    const unsigned int lmem1 = sizeof(double)*work_group_size;
-    const unsigned int lmem2 = sizeof(double)*10;
     const unsigned int dim = 3;
     const unsigned int dim_wells = 4;
+    const unsigned int lmem1 = sizeof(double)*work_group_size;
+    const unsigned int lmem2 = sizeof(double)*dim_wells;
 
-    cl::Event event = (*kernel)(cl::EnqueueArgs(*queue, cl::NDRange(total_work_items), cl::NDRange(work_group_size)), d_Cnnzs, d_Dnnzs, d_Bnnzs, d_Ccols, d_Bcols, d_x, d_y, dim, dim_wells, d_val_pointers, cl::Local(lmem1), cl::Local(lmem2), cl::Local(lmem2));
+    cl::Event event = (*kernel)(cl::EnqueueArgs(*queue, cl::NDRange(total_work_items), cl::NDRange(work_group_size)),
+                                d_Cnnzs, d_Dnnzs, d_Bnnzs, d_Ccols, d_Bcols, d_x, d_y, dim, dim_wells, d_val_pointers,
+                                cl::Local(lmem1), cl::Local(lmem2), cl::Local(lmem2));
 }
 
 void WellContributions::print_results(){
