@@ -1,49 +1,27 @@
-#define PROGRAM_FILE "/hdd/Drive/Doutorado/Projeto/Codigos/testes/opencl/WellContributions/src/WellContributions.cl"
-
-#include <iostream>
-#include <iomanip>
-#include <fstream>
 #include <vector>
-#include <CL/cl.h>
+#include <fstream>
+#include <iostream>
+#include "kernel.hpp"
+#include "WellContributions.hpp"
 
-cl_program build_program(cl_context ctx, cl_device_id dev, const char* filename){
-    cl_program program;
-    FILE *program_handle;
-    char *program_buffer;
-    size_t program_size;
-    cl_int err;
-
-    program_handle = fopen(filename, "r");
-    if(program_handle == NULL){
-        std::cout << "Couldn't find the program file" << std::endl;
-        exit(1);
-    }
-
-    fseek(program_handle, 0, SEEK_END);
-    program_size = ftell(program_handle);
-    rewind(program_handle);
-    program_buffer = (char*)malloc(program_size + 1);
-    program_buffer[program_size] = '\0';
-    fread(program_buffer, sizeof(char), program_size, program_handle);
-    fclose(program_handle);
-
-    program = clCreateProgramWithSource(ctx, 1, (const char **)&program_buffer, &program_size, &err);
-    if(err < 0){
-        std::cout << "Couldn't create the program" << std::endl;
-        exit(1);
-    }
-
-    err = clBuildProgram(program, 0, NULL, NULL, NULL, NULL);
-    
-    return program;
+WellContributions::~WellContributions(){
+    delete[] h_Cnnzs;
+    delete[] h_Dnnzs;
+    delete[] h_Bnnzs;
+    delete[] h_Ccols;
+    delete[] h_Bcols;
+    delete[] h_val_pointers;
+    delete[] h_x;
+    delete[] h_y;
+    delete[] real_y;
 }
 
 template<typename T>
-int read_vec(char const *fname, T **pp){
+int WellContributions::read_arr(char const *fname, T **pp){
     T value;
     std::ifstream input(fname);
     std::vector<T> temp;
-    
+
     while(input >> value){
         temp.push_back(value);
     }
@@ -59,169 +37,163 @@ int read_vec(char const *fname, T **pp){
     return temp.size();
 }
 
-template<typename T>
-void zero_fill(T **pp, int len){
-    T *p;
+void WellContributions::read_data(char *fnum){
+    std::string base_dir = "../data/real/";
+    std::string num(fnum);
+    std::string xname = base_dir + "x" + num + ".txt";
+    std::string ybname = base_dir + "y_before" + num + ".txt";
+    std::string yaname = base_dir + "y_after" + num + ".txt";
 
-    p = (T *)malloc(len*sizeof(T));
-    for(int i = 0; i < len; i++){
-        p[i] = 0;
-    }
-    *pp = p;
+    len_Cnnzs = read_arr<double>("../data/real/Cnnzs.txt", &h_Cnnzs);
+    len_Dnnzs = read_arr<double>("../data/real/Dnnzs.txt", &h_Dnnzs);
+    len_Bnnzs = read_arr<double>("../data/real/Bnnzs.txt", &h_Bnnzs);
+    len_Ccols = read_arr<int>("../data/real/Ccols.txt", &h_Ccols);
+    len_Bcols = read_arr<int>("../data/real/Bcols.txt", &h_Bcols);
+    len_val_pointers = read_arr<int>("../data/real/Cnnzs.txt", &h_val_pointers);
+    len_x = read_arr<double>(xname.c_str(), &h_x);
+    len_y_before = read_arr<double>(ybname.c_str(), &h_y);
+    len_y_after = read_arr<double>(yaname.c_str(), &real_y);
 }
 
-int main(){
-    cl_int d_blnc, d_blnr;
-    cl_mem d_valsB, d_valsD, d_valsC, d_rowptr, d_colsB, d_colsC, d_x, d_y;
+void WellContributions::initialize(){
+    cl_int err = CL_SUCCESS;
 
-    cl_platform_id cpPlatform;
-    cl_device_id device_id;
-    cl_context context;
-    cl_command_queue queue;
-    cl_program program;
-    cl_kernel kernel;
-    cl_int err;
-
-    float *h_valsB;
-    int len_valsB = read_vec<float>("../data/valsB.txt", &h_valsB);
-    float *h_valsD;
-    int len_valsD = read_vec<float>("../data/valsD.txt", &h_valsD);
-    float *h_valsC;
-    int len_valsC = read_vec<float>("../data/valsC.txt", &h_valsC);
-    int *h_rowptr;
-    int len_rowptr = read_vec<int>("../data/rowptr.txt", &h_rowptr);
-    int *h_colsB;
-    int len_colsB = read_vec<int>("../data/colsB.txt", &h_colsB);
-    int *h_colsC;
-    int len_colsC = read_vec<int>("../data/colsC.txt", &h_colsC);
-    float *h_x;
-    int len_x = read_vec<float>("../data/x.txt", &h_x);
-    float *h_y, *real_y;
-    int len_y = read_vec<float>("../data/y.txt", &real_y);
-    
-    zero_fill<float>(&h_y, len_y);
-
-    size_t localSize = 32;
-    size_t globalSize = 5*localSize; // 5 work-groups 
-    
-    err = clGetPlatformIDs(1, &cpPlatform, NULL);
-    err = clGetDeviceIDs(cpPlatform, CL_DEVICE_TYPE_GPU, 1, &device_id, NULL);
-    std::cout << "Got platform and device info!" << std::endl;
-
-    context = clCreateContext(NULL, 1, &device_id, NULL, NULL, &err);
-    if(err < 0){
-        std::cerr << "Couldn't create a context" << std::endl;
-        exit(1);
-    }
-    std::cout << "Created context!" << std::endl;
-
-    queue = clCreateCommandQueue(context, device_id, 0, &err);
-    if(err < 0){
-        std::cout << "Couldn't create a queue" << std::endl;
-        exit(1);
-    }
-    std::cout << "Created command queue!" << std::endl;
-
-    program = build_program(context, device_id, PROGRAM_FILE);
-    std::cout << "Built program!" << std::endl;
-
-    size_t len = 0;
-    err = clGetProgramBuildInfo(program, device_id, CL_PROGRAM_BUILD_LOG, 0, NULL, &len);
-    char *buffer = static_cast<char*>(calloc(len, sizeof(char)));
-    err = clGetProgramBuildInfo(program, device_id, CL_PROGRAM_BUILD_LOG, len, buffer, NULL);
-    std::cout << buffer << std::endl;
-
-    kernel = clCreateKernel(program, "BSRMatrixVectorProduct", &err);
-    if(err < 0){
-        std::cout << "Couldn't create the kernel (error " << err << ")" << std::endl;
-        exit(1);
-    }
-    std::cout << "Created kernel!" << std::endl;
-
-    d_valsB = clCreateBuffer(context, CL_MEM_READ_ONLY, len_valsB*sizeof(float), NULL, NULL);
-    d_valsD = clCreateBuffer(context, CL_MEM_READ_ONLY, len_valsD*sizeof(float), NULL, NULL);
-    d_valsC = clCreateBuffer(context, CL_MEM_READ_ONLY, len_valsC*sizeof(float), NULL, NULL);
-    d_rowptr = clCreateBuffer(context, CL_MEM_READ_ONLY, len_rowptr*sizeof(int), NULL, NULL);
-    d_colsB = clCreateBuffer(context, CL_MEM_READ_ONLY, len_colsB*sizeof(int), NULL, NULL);
-    d_colsC = clCreateBuffer(context, CL_MEM_READ_ONLY, len_colsC*sizeof(int), NULL, NULL);
-    d_x = clCreateBuffer(context, CL_MEM_READ_ONLY, len_x*sizeof(float), NULL, NULL);
-    d_y = clCreateBuffer(context, CL_MEM_READ_WRITE, len_y*sizeof(float), NULL, NULL);
-    d_blnc = 3; 
-    d_blnr = 4;
-    std::cout << "Created buffers!" << std::endl;
-
-    err  = clEnqueueWriteBuffer(queue, d_valsB, CL_TRUE, 0, len_valsB*sizeof(float), h_valsB, 0, NULL, NULL);
-    err |= clEnqueueWriteBuffer(queue, d_valsD, CL_TRUE, 0, len_valsD*sizeof(float), h_valsD, 0, NULL, NULL);
-    err |= clEnqueueWriteBuffer(queue, d_valsC, CL_TRUE, 0, len_valsC*sizeof(float), h_valsC, 0, NULL, NULL);
-    err |= clEnqueueWriteBuffer(queue, d_rowptr, CL_TRUE, 0, len_rowptr*sizeof(int), h_rowptr, 0, NULL, NULL);
-    err |= clEnqueueWriteBuffer(queue, d_colsB, CL_TRUE, 0, len_colsB*sizeof(int), h_colsB, 0, NULL, NULL);
-    err |= clEnqueueWriteBuffer(queue, d_colsC, CL_TRUE, 0, len_colsC*sizeof(int), h_colsC, 0, NULL, NULL);
-    err |= clEnqueueWriteBuffer(queue, d_x, CL_TRUE, 0, len_x*sizeof(float), h_x, 0, NULL, NULL);
-    err |= clEnqueueWriteBuffer(queue, d_y, CL_TRUE, 0, len_y*sizeof(float), h_y, 0, NULL, NULL);
-    if(err < 0){
-        std::cout << "Couldn't write to buffers (error: " << err << ")" << std::endl;
-        exit(1);
-    }
-    std::cout << "Wrote to buffers!" << std::endl;
-
-    err  = clSetKernelArg(kernel, 0, sizeof(cl_mem), &d_valsC);
-    err |= clSetKernelArg(kernel, 1, sizeof(cl_mem), &d_valsD);
-    err |= clSetKernelArg(kernel, 2, sizeof(cl_mem), &d_valsB);
-    err |= clSetKernelArg(kernel, 3, sizeof(cl_mem), &d_colsC);
-    err |= clSetKernelArg(kernel, 4, sizeof(cl_mem), &d_colsB);
-    err |= clSetKernelArg(kernel, 5, sizeof(cl_mem), &d_x);
-    err |= clSetKernelArg(kernel, 6, sizeof(cl_mem), &d_y);
-    err |= clSetKernelArg(kernel, 7, sizeof(cl_int), &d_blnc);
-    err |= clSetKernelArg(kernel, 8, sizeof(cl_int), &d_blnr);
-    err |= clSetKernelArg(kernel, 9, sizeof(cl_mem), &d_rowptr);
-    err |= clSetKernelArg(kernel, 10, sizeof(cl_mem), NULL);
-    err |= clSetKernelArg(kernel, 11, sizeof(cl_mem), NULL);
-    err |= clSetKernelArg(kernel, 12, sizeof(cl_mem), NULL);
-    if(err < 0){
-        std::cout << "Couldn't set kernel arguments" << std::endl;
-        exit(1);
-    }
-    std::cout << "Kernel arguments set!" << std::endl;
-
-    err = clEnqueueNDRangeKernel(queue, kernel, 1, NULL, &globalSize, &localSize, 0, NULL, NULL);
-    if(err < 0){
-        std::cout << "Couldn't enqueue kernel" << std::endl;
-        exit(1);
+    std::vector<cl::Platform> platforms;
+    cl::Platform::get(&platforms);
+    if(platforms.size() == 0){
+        std::cout << "No OpenCL platforms found. Aborting." << std::endl;
+        exit(0);
     }
 
-    clFinish(queue);
-    clEnqueueReadBuffer(queue, d_y, CL_TRUE, 0, len_y*sizeof(float), h_y, 0, NULL, NULL);
+    std::string platform_info;
+    for(unsigned int i = 0; i < platforms.size(); ++i){
+        platforms[i].getInfo(CL_PLATFORM_NAME, &platform_info);
+        std::cout << "Platform name      : " << platform_info << std::endl;
+        platforms[i].getInfo(CL_PLATFORM_VENDOR, &platform_info);
+        std::cout << "Platform vendor    : " << platform_info << std::endl;
+        platforms[i].getInfo(CL_PLATFORM_VERSION, &platform_info);
+        std::cout << "Platform version   : " << platform_info << std::endl;
+        platforms[i].getInfo(CL_PLATFORM_PROFILE, &platform_info);
+        std::cout << "Platform profile   : " << platform_info << std::endl;
+        platforms[i].getInfo(CL_PLATFORM_EXTENSIONS, &platform_info);
+        std::cout << "Platform extensions: " << platform_info << std::endl << std::endl;
+    }
 
-    std::cout << std::fixed;
-    std::cout << std::setprecision(3);
+    std::cout << "Chosen:\n";
+    platforms[platformID].getInfo(CL_PLATFORM_NAME, &platform_info);
+    std::cout << "Platform name      : " << platform_info << std::endl;
+    platforms[platformID].getInfo(CL_PLATFORM_VERSION, &platform_info);
+    std::cout << "Platform version   : " << platform_info << std::endl;
+
+    cl_context_properties properties[] = {CL_CONTEXT_PLATFORM, (cl_context_properties)(platforms[platformID])(), 0};
+    context.reset(new cl::Context(CL_DEVICE_TYPE_GPU, properties));
+
+    std::vector<cl::Device> devices = context->getInfo<CL_CONTEXT_DEVICES>();
+    if (devices.size() == 0){
+        std::cout << "No OpenCL devices found. Aborting.";
+        exit(0);
+    }
+    std::cout << "Found " << devices.size() << " OpenCL devices" << std::endl;
+
+    std::string device_info;
+    for (unsigned int i = 0; i < devices.size(); ++i) {
+        std::vector<size_t> work_sizes;
+        std::vector<cl_device_partition_property> partitions;
+
+        devices[i].getInfo(CL_DEVICE_NAME, &device_info);
+        std::cout << "CL_DEVICE_NAME            : " << device_info << std::endl;
+        devices[i].getInfo(CL_DEVICE_VENDOR, &device_info);
+        std::cout << "CL_DEVICE_VENDOR          : " << device_info << std::endl;
+        devices[i].getInfo(CL_DRIVER_VERSION, &device_info);
+        std::cout << "CL_DRIVER_VERSION         : " << device_info << std::endl;
+        devices[i].getInfo(CL_DEVICE_BUILT_IN_KERNELS, &device_info);
+        std::cout << "CL_DEVICE_BUILT_IN_KERNELS: " << device_info << std::endl;
+        devices[i].getInfo(CL_DEVICE_PROFILE, &device_info);
+        std::cout << "CL_DEVICE_PROFILE         : " << device_info << std::endl;
+        devices[i].getInfo(CL_DEVICE_OPENCL_C_VERSION, &device_info);
+        std::cout << "CL_DEVICE_OPENCL_C_VERSION: " << device_info << std::endl;
+        devices[i].getInfo(CL_DEVICE_EXTENSIONS, &device_info);
+        std::cout << "CL_DEVICE_EXTENSIONS      : " << device_info << std::endl;
+
+        devices[i].getInfo(CL_DEVICE_MAX_WORK_ITEM_SIZES, &work_sizes);
+        for (unsigned int j = 0; j < work_sizes.size(); ++j) {
+            std::cout << "CL_DEVICE_MAX_WORK_ITEM_SIZES[" << j << "]: " << work_sizes[j] << std::endl;
+        }
+        devices[i].getInfo(CL_DEVICE_PARTITION_PROPERTIES, &partitions);
+        for (unsigned int j = 0; j < partitions.size(); ++j) {
+            std::cout << "CL_DEVICE_PARTITION_PROPERTIES[" << j << "]: " << partitions[j] << std::endl;
+        }
+        partitions.clear();
+        devices[i].getInfo(CL_DEVICE_PARTITION_TYPE, &partitions);
+        for (unsigned int j = 0; j < partitions.size(); ++j) {
+            std::cout << "CL_DEVICE_PARTITION_PROPERTIES[" << j << "]: " << partitions[j] << std::endl;
+        }
+
+        // C-style properties
+        cl_device_id tmp_id = devices[i]();
+        cl_ulong size;
+        clGetDeviceInfo(tmp_id, CL_DEVICE_LOCAL_MEM_SIZE, sizeof(cl_ulong), &size, 0);
+        std::cout << "CL_DEVICE_LOCAL_MEM_SIZE       : " << size / 1024 << " KB" << std::endl;
+        clGetDeviceInfo(tmp_id, CL_DEVICE_GLOBAL_MEM_SIZE, sizeof(cl_ulong), &size, 0);
+        std::cout << "CL_DEVICE_GLOBAL_MEM_SIZE      : " << size / 1024 / 1024 / 1024 << " GB" << std::endl;
+        clGetDeviceInfo(tmp_id, CL_DEVICE_MAX_COMPUTE_UNITS, sizeof(cl_ulong), &size, 0);
+        std::cout << "CL_DEVICE_MAX_COMPUTE_UNITS    : " << size << std::endl;
+        clGetDeviceInfo(tmp_id, CL_DEVICE_MAX_MEM_ALLOC_SIZE, sizeof(cl_ulong), &size, 0);
+        std::cout << "CL_DEVICE_MAX_MEM_ALLOC_SIZE   : " << size / 1024 / 1024 << " MB" << std::endl;
+        clGetDeviceInfo(tmp_id, CL_DEVICE_MAX_WORK_GROUP_SIZE, sizeof(cl_ulong), &size, 0);
+        std::cout << "CL_DEVICE_MAX_WORK_GROUP_SIZE  : " << size << std::endl;
+        clGetDeviceInfo(tmp_id, CL_DEVICE_GLOBAL_MEM_SIZE, sizeof(cl_ulong), &size, 0);
+        std::cout << "CL_DEVICE_GLOBAL_MEM_SIZE      : " << size / 1024 / 1024 / 1024 << " GB" << std::endl << std::endl;
+    }
+
+    std::cout << "Chosen:" << std::endl;
+    devices[deviceID].getInfo(CL_DEVICE_NAME, &device_info);
+    std::cout << "CL_DEVICE_NAME            : " << device_info << std::endl;
+    devices[deviceID].getInfo(CL_DEVICE_VERSION, &device_info);
+    std::cout << "CL_DEVICE_VERSION         : " << device_info << std::endl;
+
+    cl::Program::Sources source(1, std::make_pair(kernel_s, strlen(kernel_s)));
+    cl::Program program_ = cl::Program(*context, source);
+
+    program_.build(devices);
+
+    cl::Event event;
+    queue.reset(new cl::CommandQueue(*context, devices[deviceID], 0, &err));
+
+    d_Cnnzs = cl::Buffer(*context, CL_MEM_READ_WRITE, sizeof(double) * len_Cnnzs);
+    d_Dnnzs = cl::Buffer(*context, CL_MEM_READ_WRITE, sizeof(double) * len_Dnnzs);
+    d_Bnnzs = cl::Buffer(*context, CL_MEM_READ_WRITE, sizeof(double) * len_Bnnzs);
+    d_Ccols = cl::Buffer(*context, CL_MEM_READ_WRITE, sizeof(int) * len_Ccols);
+    d_Bcols = cl::Buffer(*context, CL_MEM_READ_WRITE, sizeof(int) * len_Bcols);
+    d_val_pointers = cl::Buffer(*context, CL_MEM_READ_WRITE, sizeof(int) * len_val_pointers);
+    d_x = cl::Buffer(*context, CL_MEM_READ_WRITE, sizeof(double) * len_x);
+    d_y = cl::Buffer(*context, CL_MEM_READ_WRITE, sizeof(double) * len_y_before);
+
+    kernel.reset(new cl::make_kernel<cl::Buffer&, cl::Buffer&, cl::Buffer&,
+                                    cl::Buffer&, cl::Buffer&, cl::Buffer&,
+                                    cl::Buffer&, const unsigned int,
+                                    const unsigned int, cl::Buffer&,
+                                    cl::LocalSpaceArg, cl::LocalSpaceArg,
+                                    cl::LocalSpaceArg>(cl::Kernel(program_, "BCRSMatrixProduct")));
+
+}
+
+void WellContributions::apply_kernel(){
+    const unsigned int work_group_size = 32;
+    const unsigned int total_work_items = (len_val_pointers - 1)*work_group_size;
+    const unsigned int lmem1 = sizeof(double)*work_group_size;
+    const unsigned int lmem2 = sizeof(double)*10;
+    const unsigned int dim = 3;
+    const unsigned int dim_wells = 4;
+
+    cl::Event event = (*kernel)(cl::EnqueueArgs(*queue, cl::NDRange(total_work_items), cl::NDRange(work_group_size)), d_Cnnzs, d_Dnnzs, d_Bnnzs, d_Ccols, d_Bcols, d_x, d_y, dim, dim_wells, d_val_pointers, cl::Local(lmem1), cl::Local(lmem2), cl::Local(lmem2));
+}
+
+void WellContributions::print_results(){
+    queue->enqueueReadBuffer(d_y, CL_TRUE, 0, sizeof(double) * len_y_after, h_y);
+
     std::cout << "\th_y\t\treal_y\t\tdiff" << std::endl;
-    for(int i = 0; i < len_y; i++){
-        std::cout << i << "\t" << h_y[i] << "\t\t" << real_y[i] << "\t\t" << real_y[i] - h_y[i] << std::endl;
+    for(int i = 0; i < len_y_after; i++){
+        std::cout << i << "\t" << h_y[i] << "\t\t" << real_y[i] << "\t\t" << real_y[i] - h_y[i] << std::scientific << std::endl;
     }
-
-    clReleaseMemObject(d_valsB);
-    clReleaseMemObject(d_valsD);
-    clReleaseMemObject(d_valsC);
-    clReleaseMemObject(d_rowptr);
-    clReleaseMemObject(d_colsB);
-    clReleaseMemObject(d_colsC);
-    clReleaseMemObject(d_x);
-    clReleaseMemObject(d_y);
-    clReleaseProgram(program);
-    clReleaseKernel(kernel);
-    clReleaseCommandQueue(queue);
-    clReleaseContext(context);
-
-    free(h_valsB);
-    free(h_valsD);
-    free(h_valsC);
-    free(h_rowptr);
-    free(h_colsB);
-    free(h_colsC);
-    free(h_x);
-    free(h_y);
-
-    std::cout << "Program finished!!!" << std::endl;
-
-    return 0;
 }
