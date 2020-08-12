@@ -1,12 +1,7 @@
 #include "WellContributions.hpp"
 
-int main(int argc, char *argv[]) {
+int main(int, char *argv[]) {
     WellContributions wellContributions;
-
-    wellContributions.read_data(argv[1]);
-    wellContributions.initialize();
-    wellContributions.apply_kernel();
-    wellContributions.print_results();
-   
+    wellContributions.run(argv[1]);
     return 0;
 }

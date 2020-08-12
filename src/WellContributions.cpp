@@ -177,6 +177,18 @@ void WellContributions::initialize(){
 
 }
 
+void WellContributions::copy_data_to_gpu(){
+    cl::Event event;
+
+    queue->enqueueWriteBuffer(d_Cnnzs, CL_TRUE, 0, sizeof(double) * len_Cnnzs, h_Cnnzs);
+    queue->enqueueWriteBuffer(d_Dnnzs, CL_TRUE, 0, sizeof(double) * len_Dnnzs, h_Dnnzs);
+    queue->enqueueWriteBuffer(d_Bnnzs, CL_TRUE, 0, sizeof(double) * len_Bnnzs, h_Bnnzs);
+    queue->enqueueWriteBuffer(d_Ccols, CL_TRUE, 0, sizeof(int) * len_Ccols, h_Ccols);
+    queue->enqueueWriteBuffer(d_Bcols, CL_TRUE, 0, sizeof(int) * len_Bcols, h_Bcols);
+    queue->enqueueWriteBuffer(d_val_pointers, CL_TRUE, 0, sizeof(int) * len_val_pointers, h_val_pointers);
+    queue->enqueueWriteBuffer(d_x, CL_TRUE, 0, sizeof(double) * len_x, h_x);
+}
+
 void WellContributions::apply_kernel(){
     const unsigned int work_group_size = 32;
     const unsigned int total_work_items = (len_val_pointers - 1)*work_group_size;
@@ -197,4 +209,11 @@ void WellContributions::print_results(){
     for(int i = 0; i < len_y_after; i++){
         std::cout << i << "\t" << h_y[i] << "\t\t" << real_y[i] << "\t\t" << real_y[i] - h_y[i] << std::scientific << std::endl;
     }
+}
+
+void WellContributions::run(char *fnum){
+    read_data(fnum);
+    initialize();
+    copy_data_to_gpu();
+    print_results();
 }
