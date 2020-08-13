@@ -34,7 +34,7 @@ class WellContributions{
         cl::Buffer d_Cnnzs, d_Dnnzs, d_Bnnzs, d_x, d_y;
         cl::Buffer d_Ccols, d_Bcols, d_val_pointers;
 
-        template<typename T> int read_arr(char const *fname, T **p);
+        template<typename T> int read_arr(char const *fname, T *&pp);
         void read_data(char *fnum);
         void initialize();
         void copy_data_to_gpu();

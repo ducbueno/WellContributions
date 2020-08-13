@@ -17,7 +17,7 @@ WellContributions::~WellContributions(){
 }
 
 template<typename T>
-int WellContributions::read_arr(char const *fname, T **pp){
+int WellContributions::read_arr(char const *fname, T *&pp){
     T value;
     std::ifstream input(fname);
     std::vector<T> temp;
@@ -27,12 +27,8 @@ int WellContributions::read_arr(char const *fname, T **pp){
     }
     input.close();
 
-    T *p;
-    p = (T *)malloc(temp.size()*sizeof(T));
-    for(std::size_t i = 0; i < temp.size(); i++){
-        p[i] = temp[i];
-    }
-    *pp = p;
+    pp = new T[temp.size()];
+    std::memcpy(pp, temp.data(), sizeof(T) * temp.size());
 
     return temp.size();
 }
@@ -44,15 +40,15 @@ void WellContributions::read_data(char *fnum){
     std::string ybname = base_dir + "y_before" + num + ".txt";
     std::string yaname = base_dir + "y_after" + num + ".txt";
 
-    len_Cnnzs = read_arr<double>("../data/real/Cnnzs.txt", &h_Cnnzs);
-    len_Dnnzs = read_arr<double>("../data/real/Dnnzs.txt", &h_Dnnzs);
-    len_Bnnzs = read_arr<double>("../data/real/Bnnzs.txt", &h_Bnnzs);
-    len_Ccols = read_arr<int>("../data/real/Ccols.txt", &h_Ccols);
-    len_Bcols = read_arr<int>("../data/real/Bcols.txt", &h_Bcols);
-    len_val_pointers = read_arr<int>("../data/real/Cnnzs.txt", &h_val_pointers);
-    len_x = read_arr<double>(xname.c_str(), &h_x);
-    len_y_before = read_arr<double>(ybname.c_str(), &h_y);
-    len_y_after = read_arr<double>(yaname.c_str(), &real_y);
+    len_Cnnzs = read_arr<double>("../data/real/Cnnzs.txt", h_Cnnzs);
+    len_Dnnzs = read_arr<double>("../data/real/Dnnzs.txt", h_Dnnzs);
+    len_Bnnzs = read_arr<double>("../data/real/Bnnzs.txt", h_Bnnzs);
+    len_Ccols = read_arr<int>("../data/real/Ccols.txt", h_Ccols);
+    len_Bcols = read_arr<int>("../data/real/Bcols.txt", h_Bcols);
+    len_val_pointers = read_arr<int>("../data/real/Cnnzs.txt", h_val_pointers);
+    len_x = read_arr<double>(xname.c_str(), h_x);
+    len_y_before = read_arr<double>(ybname.c_str(), h_y);
+    len_y_after = read_arr<double>(yaname.c_str(), real_y);
 }
 
 void WellContributions::initialize(){
@@ -187,6 +183,7 @@ void WellContributions::copy_data_to_gpu(){
     queue->enqueueWriteBuffer(d_Bcols, CL_TRUE, 0, sizeof(int) * len_Bcols, h_Bcols);
     queue->enqueueWriteBuffer(d_val_pointers, CL_TRUE, 0, sizeof(int) * len_val_pointers, h_val_pointers);
     queue->enqueueWriteBuffer(d_x, CL_TRUE, 0, sizeof(double) * len_x, h_x);
+    queue->enqueueWriteBuffer(d_y, CL_TRUE, 0, sizeof(double) * len_y_before, h_y);
 }
 
 void WellContributions::apply_kernel(){
