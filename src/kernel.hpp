@@ -1,3 +1,7 @@
+#ifndef __KERNEL_H_
+#define __KERNEL_H_
+
+const char* kernel_s = R"(
 #pragma OPENCL EXTENSION cl_khr_fp64: enable
 #pragma OPENCL EXTENSION cl_khr_int64_base_atomics: enable
 
@@ -6,7 +10,7 @@ void atomicAdd(volatile __global double *val, const double delta){
         double f;
         ulong i;
     } old;
-    
+
     union{
         double f;
         ulong i;
@@ -21,8 +25,8 @@ void atomicAdd(volatile __global double *val, const double delta){
 __kernel void BSRMatrixVectorProduct(__global double *valsC,
                                      __global double *valsD,
                                      __global double *valsB,
-                                     __global const int *colsC, 
-                                     __global const int *colsB, 
+                                     __global const int *colsC,
+                                     __global const int *colsB,
                                      __global double *x,
                                      __global double *y,
                                      const int blnc,
@@ -42,7 +46,7 @@ __kernel void BSRMatrixVectorProduct(__global double *valsC,
     double temp;
 
     localSum[wiId] = 0;
-    
+
     if(wiId < numActiveWorkItems){
         int b = wiId/valsPerBlock + rowptr[wgId];
 
@@ -52,16 +56,16 @@ __kernel void BSRMatrixVectorProduct(__global double *valsC,
             b += numBlocksPerWarp;
         }
     }
-   
+
     barrier(CLK_LOCAL_MEM_FENCE);
-    
+
     int stride = valsPerBlock;
     if(wiId < stride){
         localSum[wiId] += localSum[wiId + stride];
     }
-        
+
     barrier(CLK_LOCAL_MEM_FENCE);
-    
+
     if(c == 0 && wiId < valsPerBlock){
         for(stride = 2; stride > 0; stride /= 2){
             localSum[wiId] += localSum[wiId + stride];
@@ -78,7 +82,7 @@ __kernel void BSRMatrixVectorProduct(__global double *valsC,
         }
         z2[wiId] = temp;
     }
-    
+
     barrier(CLK_GLOBAL_MEM_FENCE);
 
     if(wiId < blnc*valSize){
@@ -91,3 +95,6 @@ __kernel void BSRMatrixVectorProduct(__global double *valsC,
         atomicAdd(&y[colIdx*blnc + c], temp);
     }
 }
+)";
+
+#endif // __KERNEL_H_
